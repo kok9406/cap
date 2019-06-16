@@ -1,8 +1,11 @@
 import numpy as np
+import cv
 import cv2
 import serial
-import picamera import PiCamera
+from picamera import PiCamera
 from time import sleep
+from matplotlib import pyplot as plt
+import os
 
 ser = serial.Serial('/dev/ttyACM0', 57600)
 
@@ -10,90 +13,47 @@ camera = PiCamera()
 
 camera.resolution = (800,400)
 
-#이미지 부분추출
+
 def im_trim (img) : 
     x = 318; y = 199
     w = 222; h = 165
-    img_trim = img[y:y+h, x:x+w] #잘라낸 결과를 img에 저장
+    img_trim = img[y:y+h, x:x+w]
     cv2.imwrite('/Auth/%04d.png' % nID, img_trim)
     return img_trim
 
 #Local Binary Pattern Filter
 def LBP_Img(img):
-    size2, size1 = img.shape
-    numbers = []
-    dx = 8
-    dy = 8
-    cell_x = 16
-    cell_y = 16
-    x = 0
-    y = 0
-    
-    hist_list = []
-    while  y + cell_y  <= size2:
-        for i in range(y, y + cell_y):
-            for j in range(x, x + cell_x):
-                
-                hood = np.zeros((3,3), dtype = int)
-                
-                if j == 0 and i == 0:
-                    hood[1:3, 1:3] = img[i:i+2, j:j+2]
-                    
-                elif i == 0 and j == size1 - 1:
-                    hood[1:3, 0:2] = img[i:i+2, j-1:j+1]
-                       
-                elif j == 0 and i == size2 - 1:
-                    hood[0:2, 1:3] = img[i-1:i+1, j:j+2]
-                            
-                elif i == size2 - 1 and j == size1 - 1:
-                                hood[0:2, 0:2] = img[i-1 : i+1, j-1:j+1]
-                                
-                elif i == 0:
-                    hood[1:3,0:3] = img[i:i+2, j-1:j+2]
-                                    
-                elif j == 0:
-                    hood[0:3, 1:3] = img[i-1:i+2, j:j+2]
-
-                elif i == size2 - 1:
-                    hood[0:2, 0:3] = img[i-1 : i+1, j-1:j+2]      
-
-                elif j == size1 - 1:
-                    hood[0:3, 0:2] = img[i-1 : i+2, j-1:j+1]
-                                                
-                else:
-                    hood = img[i-1 : i+2, j-1:j+2]
-                                                    
-                ordered_hood = np.concatenate((hood[0], [hood[1,2], hood[2,2], hood[2,1], hood[2,0], hood[1,0]]))
-                                                    
-                for k in range(len(ordered_hood)):
-                    if ordered_hood[k] < hood [1,1]:
-                        ordered_hood[k] = 0
-                    else:
-                        ordered_hood[k] = 1
-                                                                
-                    binary = ""
-                    for digit in ordered_hood:
-                        binary += str(digit)
-                    integer = int(binary, 2)
-                    numbers.append(integer)
-
-        hist = np.zeros(256)
-        for l in numbers:
-            hist[l] += 1
-            hist_list = np.concatenate((hist_list, hist))
-
-        if x + dx + cell_x > size1:
-            x = 0
-            y = y + dy
-        else:
-            x = x + dx
-    return hist_list
+    """
+    calculate LBP (Local Binary Pattern) image N8 neighborhood
+    """
+    sz = cv.GetSize(img)
+    gr = cv.CreateImage(sz, 8, 1)
+    lbp = cv.CreateImage(sz, 8, 1)
+     
+    #convert to grayscale
+    cv.CvtColor(img, gr, cv.CV_BGR2GRAY)
+ 
+    LBPMASK = [(0,-1),(1,-1),(1,0),(1,1),(0,1),(-1,-1),(-1,0),(-1,1)]
+     
+    for y in xrange(1, sz[1]-2):
+        for x in xrange(1, sz[0]-2):
+            n = 0
+            gv = gr[y,x]
+            for i in xrange(len(LBPMASK)):
+                m = LBPMASK[i]
+                if gr[y+m[1], x+m[0]]>gv:
+                    n += 1 << i
+            lbp[y,x] = n
+             
+    return lbp
     
 def TemplateMat():
-    img1 = Pic
+    img1 = LBP_Result
     img2 = img1.copy()
     
-    template = LBP_Result(gray)
+    fname = '/home/pi/project/Auth/{0:04}.png' .format(nID)
+    
+    template = cv2.imread(fname)
     
     #Template img size
     w, h = template.shape[::-1]
@@ -106,7 +66,7 @@ def TemplateMat():
         method = eval(meth)
         
         try:
-            res = cv2matchTemplate(img1, template, method)
+            res = cv2.matchTemplate(img1, template, method)
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
         except:
             print('error', meth)
@@ -121,10 +81,10 @@ def TemplateMat():
             Temp = 0
     return Temp
 
-nProcess = 0
-a = 0
+nProcess = 2
+a = 2
 nAc_Count = 0
-nID = 0
+nID = 1
 nImages = 256
 Temp = 0
 nDelete_cashe = 0
@@ -133,24 +93,23 @@ while a == 0 :
     a = input()
     nProcess = a
 
-#인증절차
+
 if nProcess == 1:
     nAc_Count = 3
-    #nID = 아두이노에서 입력받은 ID
+    
     while nAc_Count != 0 :
         if nID >= nImages or nID <= 0:
             print("Default")
             nAc_Count = nAc_Count - 1
         else :
-            #카메라에서 이미지 촬영 후 dir cache에 저장
-            camera.capture('/home/pi/project/cache.png')
-            img = cv2.imread('/home/pi/project/cache.png')
-            
-            #카메라이미지불러오기
-            gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
-            gray = im_trim(gray)
-            LBP_Result = LBP_Img(gray)
-            if(img.empty()) :
+            camera.capture('/home/pi/project/cache/cache.png')
+            camera.resolution = (800,400)
+            img = cv2.imread('/home/pi/project/cache/cache.png')
+                       
+            gray = cv2.imread(img, cv2.IMREAD_GRAYSCALE)
+            gray_img = im_trim(gray)
+            LBP_Result = LBP_Img(gray_img)
+            if img is not None :
                 print("Can't find Image") 
                 nAc_Count = nAc_Count -1
                 if nAc_Count == 0 :
@@ -165,31 +124,32 @@ if nProcess == 1:
                     nAc_Count = nAc_Count - 1
                 if nAc_Count == 0 :
                     break
-#등록절차
+
 elif nProcess == 2 :
     if nID >= nImages or nID <= 0:
         print('Can not Enroll  ')
     else :
-        #카메라에서 이미지 가져오는걸로 수정해야함
-        camera.capture('/home/pi/project/cache.png')
-        img = cv2.imread('/home/pi/project/cache.png'
-            
-        gray = cv2.cvtColor(img,cv2.COLOR_RGB2GRAY)
-        gray = im_trim(gray)
-        LBP_Result = LBP_Img(gray)
+        camera.capture('/home/pi/project/cache/cache.png')
+        camera.resolution = (800,400)
+        img = ('/home/pi/project/cache/cache.png')
 
-        fname = '/Auth/%4d.png' %(nID)
-        if img.empty() : 
+        gray = cv2.imread(img, cv2.IMREAD_GRAYSCALE)
+
+        gray_img = im_trim(gray)
+        cv2.imshow('capture', gray_img)
+        LBP_Result = LBP_Img(gray_img)
+        cv2.imshow('LBP', LBP_Result)
+        fname = '/home/pi/project/Auth/{0:04}.png' .format(nID)
+        if img is not None :
             cv2.imwrite(fname, LBP_Result)
             print('Save Success    ')
         else :
             print('Image was exist ')
             
 
-#초기화절차
-elif Process == 3 :
+elif nProcess == 3 :
     for nDelete_cashe in range(1, nImages) :
-        fname = '/Auth/%4d.png' %(nDelete_cashe)
+        fname = '/home/pi/project/Auth/{0:04}.png' .format(nDelete_cashe)
         if os.path.isfile(fname) :
             os.remove(fname)
     print('Reset Complete!!')
@@ -198,5 +158,5 @@ elif Process == 3 :
 else : 
     a = 0;
     
-cv2.waitKey(1000)
+cv2.waitKey(10000)
 cv2.destroyAllWindows()
